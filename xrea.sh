@@ -1,11 +1,15 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # XREA 用: CRONジョブから 1 回だけ叩く「配置・更新・初期化・診断」スクリプト（SSH もファイルマネージャーも不要）。
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/yasuotomita-cpu/shift-dist/main/xrea.sh)" -- install
 # 公開リポジトリ shift-dist に置かれる（shift 本体は非公開。release.yml が自動で出す）
 # 結果は https://shift.the-agent.co/_status.txt に書き出す（合言葉・キー・パスワードは書かない）。
-# 引数:  install … 最新の配布 zip を取得して置き換え → 初期化 → 診断（初回も更新もこれ）
+# XREA の CRON は /bin/sh で実行・最長 3 分。POSIX sh だけで書く（bash 専用の書き方をしない）。
+# 引数:  install … 最新の配布 zip を取得して置き換え → 初期化 → 診断（deploy/update.sh から呼ばれる）
+#        weekly  … 週次サマリーを作る（deploy/weekly.sh から呼ばれる。ログは storage/logs/cron.log）
 #        doctor  … 診断だけ
 set -u
+HOME="${HOME:-/virtual/theagent}"
+START=$(date +%s)
 DOMAIN=shift.the-agent.co
 APP="$HOME/laravel-weight"
 DOC="$HOME/public_html/$DOMAIN"
@@ -14,7 +18,7 @@ ZIP_URL="${ZIP_URL:-https://github.com/yasuotomita-cpu/shift-dist/releases/lates
 MODE="${1:-install}"
 
 mkdir -p "$DOC"
-exec >"$OUT" 2>&1
+if [ "$MODE" = "weekly" ]; then OUT="$APP/storage/logs/cron.log"; exec >>"$OUT" 2>&1; else exec >"$OUT" 2>&1; fi
 echo "== shift $MODE $(date '+%Y-%m-%d %H:%M:%S') HOME=$HOME"
 
 # PHP 8.2 以上の CLI を探す（XREA は版ごとに別コマンド）
@@ -48,6 +52,10 @@ if [ "$MODE" = "install" ]; then
 fi
 
 cd "$APP" || { echo "NG $APP が無い。install を先に"; exit 1; }
+if [ "$MODE" = "weekly" ]; then
+  "$PHP" artisan weekly:summary
+  echo "== 終わり（$(( $(date +%s) - START )) 秒）"; exit 0
+fi
 mkdir -p storage/framework/sessions storage/framework/views storage/framework/cache storage/logs storage/app/private bootstrap/cache
 chmod -R 775 storage bootstrap/cache
 if [ ! -f .env ]; then cp .env.example .env; echo "OK .env を .env.example から作った（DB と合言葉と Gemini キーを入れる必要あり）"; fi
@@ -57,4 +65,4 @@ echo "OK 設定キャッシュを消した（.env を直接読む）"
 if [ "$MODE" = "install" ]; then "$PHP" artisan migrate --force 2>&1 | tail -5; fi
 echo "== 診断"
 "$PHP" artisan shift:doctor
-echo "== 終わり。この CRONジョブは削除する"
+echo "== 終わり（所要 $(( $(date +%s) - START )) 秒。XREA の CRON は 3 分まで）。更新用の CRONジョブは無効にする"
